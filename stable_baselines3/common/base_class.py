@@ -21,7 +21,7 @@ from stable_baselines3.common.logger import Logger
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.noise import ActionNoise
 from stable_baselines3.common.policies import BasePolicy
-from stable_baselines3.common.preprocessing import check_for_nested_spaces, is_image_space, is_image_space_channels_first
+from stable_baselines3.common.preprocessing import check_for_nested_spaces
 from stable_baselines3.common.save_util import load_from_zip_file, recursive_getattr, recursive_setattr, save_to_zip_file
 from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule, TensorDict
 from stable_baselines3.common.utils import (
@@ -36,7 +36,6 @@ from stable_baselines3.common.vec_env import (
     DummyVecEnv,
     VecEnv,
     VecNormalize,
-    VecTransposeImage,
     is_vecenv_wrapped,
     unwrap_vec_normalize,
 )
@@ -45,23 +44,6 @@ from stable_baselines3.common.vec_env.patch_gym import _convert_space, _patch_en
 SelfBaseAlgorithm = TypeVar("SelfBaseAlgorithm", bound="BaseAlgorithm")
 
 
-def maybe_make_env(env: Union[GymEnv, str], verbose: int) -> GymEnv:
-    """If env is a string, make the environment; otherwise, return env.
-
-    :param env: The environment to learn from.
-    :param verbose: Verbosity level: 0 for no output, 1 for indicating if environment is created
-    :return A Gym (vector) environment.
-    """
-    if isinstance(env, str):
-        env_id = env
-        if verbose >= 1:
-            print(f"Creating environment from the given name '{env_id}'")
-        # Set render_mode to `rgb_array` as default, so we can record video
-        try:
-            env = gym.make(env_id, render_mode="rgb_array")
-        except TypeError:
-            env = gym.make(env_id)
-    return env
 
 
 class BaseAlgorithm(ABC):
@@ -166,7 +148,6 @@ class BaseAlgorithm(ABC):
 
         # Create and wrap the env if needed
         if env is not None:
-            env = maybe_make_env(env, self.verbose)
             env = self._wrap_env(env, self.verbose, monitor_wrapper)
 
             self.observation_space = env.observation_space
@@ -226,25 +207,6 @@ class BaseAlgorithm(ABC):
         # Make sure that dict-spaces are not nested (not supported)
         check_for_nested_spaces(env.observation_space)
 
-        if not is_vecenv_wrapped(env, VecTransposeImage):
-            wrap_with_vectranspose = False
-            if isinstance(env.observation_space, spaces.Dict):
-                # If even one of the keys is a image-space in need of transpose, apply transpose
-                # If the image spaces are not consistent (for instance one is channel first,
-                # the other channel last), VecTransposeImage will throw an error
-                for space in env.observation_space.spaces.values():
-                    wrap_with_vectranspose = wrap_with_vectranspose or (
-                        is_image_space(space) and not is_image_space_channels_first(space)  # type: ignore[arg-type]
-                    )
-            else:
-                wrap_with_vectranspose = is_image_space(env.observation_space) and not is_image_space_channels_first(
-                    env.observation_space  # type: ignore[arg-type]
-                )
-
-            if wrap_with_vectranspose:
-                if verbose >= 1:
-                    print("Wrapping the env in a VecTransposeImage.")
-                env = VecTransposeImage(env)
 
         return env
 

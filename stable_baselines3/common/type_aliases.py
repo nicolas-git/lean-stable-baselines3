@@ -46,25 +46,6 @@ class DictRolloutBufferSamples(NamedTuple):
     returns: th.Tensor
 
 
-class ReplayBufferSamples(NamedTuple):
-    observations: th.Tensor
-    actions: th.Tensor
-    next_observations: th.Tensor
-    dones: th.Tensor
-    rewards: th.Tensor
-    # For n-step replay buffer
-    discounts: Optional[th.Tensor] = None
-
-
-class DictReplayBufferSamples(NamedTuple):
-    observations: TensorDict
-    actions: th.Tensor
-    next_observations: TensorDict
-    dones: th.Tensor
-    rewards: th.Tensor
-    discounts: Optional[th.Tensor] = None
-
-
 class RolloutReturn(NamedTuple):
     episode_timesteps: int
     n_episodes: int

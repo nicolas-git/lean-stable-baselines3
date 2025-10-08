@@ -21,14 +21,11 @@ from stable_baselines3.common.distributions import (
     StateDependentNoiseDistribution,
     make_proba_distribution,
 )
-from stable_baselines3.common.preprocessing import get_action_dim, is_image_space, maybe_transpose, preprocess_obs
+from stable_baselines3.common.preprocessing import preprocess_obs
 from stable_baselines3.common.torch_layers import (
     BaseFeaturesExtractor,
-    CombinedExtractor,
     FlattenExtractor,
     MlpExtractor,
-    NatureCNN,
-    create_mlp,
 )
 from stable_baselines3.common.type_aliases import PyTorchObs, Schedule
 from stable_baselines3.common.utils import get_device, is_vectorized_observation, obs_as_tensor
@@ -90,8 +87,7 @@ class BaseModel(nn.Module):
         self.features_extractor_class = features_extractor_class
         self.features_extractor_kwargs = features_extractor_kwargs
         # Automatically deactivate dtype and bounds checks
-        if not normalize_images and issubclass(features_extractor_class, (NatureCNN, CombinedExtractor)):
-            self.features_extractor_kwargs.update(dict(normalized_image=True))
+
 
     def _update_features_extractor(
         self,
@@ -226,11 +222,7 @@ class BaseModel(nn.Module):
             ), f"The observation provided is a dict but the obs space is {self.observation_space}"
             for key, obs in observation.items():
                 obs_space = self.observation_space.spaces[key]
-                vectorized_env = vectorized_env or is_vectorized_observation(maybe_transpose(obs, obs_space), obs_space)
-        else:
-            vectorized_env = is_vectorized_observation(
-                maybe_transpose(observation, self.observation_space), self.observation_space
-            )
+
         return vectorized_env
 
     def obs_to_tensor(self, observation: Union[np.ndarray, dict[str, np.ndarray]]) -> tuple[PyTorchObs, bool]:
@@ -251,18 +243,12 @@ class BaseModel(nn.Module):
             observation = copy.deepcopy(observation)
             for key, obs in observation.items():
                 obs_space = self.observation_space.spaces[key]
-                if is_image_space(obs_space):
-                    obs_ = maybe_transpose(obs, obs_space)
-                else:
-                    obs_ = np.array(obs)
+
+                obs_ = np.array(obs)
                 vectorized_env = vectorized_env or is_vectorized_observation(obs_, obs_space)
                 # Add batch dimension if needed
                 observation[key] = obs_.reshape((-1, *self.observation_space[key].shape))  # type: ignore[misc]
 
-        elif is_image_space(self.observation_space):
-            # Handle the different cases for images
-            # as PyTorch use channel first format
-            observation = maybe_transpose(observation, self.observation_space)
 
         else:
             observation = np.array(observation)
@@ -494,10 +480,7 @@ class ActorCriticPolicy(BasePolicy):
 
         # Default network architecture, from stable-baselines
         if net_arch is None:
-            if features_extractor_class == NatureCNN:
-                net_arch = []
-            else:
-                net_arch = dict(pi=[64, 64], vf=[64, 64])
+            net_arch = dict(pi=[64, 64], vf=[64, 64])
 
         self.net_arch = net_arch
         self.activation_fn = activation_fn
@@ -762,226 +745,3 @@ class ActorCriticPolicy(BasePolicy):
         latent_vf = self.mlp_extractor.forward_critic(features)
         return self.value_net(latent_vf)
 
-
-class ActorCriticCnnPolicy(ActorCriticPolicy):
-    """
-    CNN policy class for actor-critic algorithms (has both policy and value prediction).
-    Used by A2C, PPO and the likes.
-
-    :param observation_space: Observation space
-    :param action_space: Action space
-    :param lr_schedule: Learning rate schedule (could be constant)
-    :param net_arch: The specification of the policy and value networks.
-    :param activation_fn: Activation function
-    :param ortho_init: Whether to use or not orthogonal initialization
-    :param use_sde: Whether to use State Dependent Exploration or not
-    :param log_std_init: Initial value for the log standard deviation
-    :param full_std: Whether to use (n_features x n_actions) parameters
-        for the std instead of only (n_features,) when using gSDE
-    :param use_expln: Use ``expln()`` function instead of ``exp()`` to ensure
-        a positive standard deviation (cf paper). It allows to keep variance
-        above zero and prevent it from growing too fast. In practice, ``exp()`` is usually enough.
-    :param squash_output: Whether to squash the output using a tanh function,
-        this allows to ensure boundaries when using gSDE.
-    :param features_extractor_class: Features extractor to use.
-    :param features_extractor_kwargs: Keyword arguments
-        to pass to the features extractor.
-    :param share_features_extractor: If True, the features extractor is shared between the policy and value networks.
-    :param normalize_images: Whether to normalize images or not,
-         dividing by 255.0 (True by default)
-    :param optimizer_class: The optimizer to use,
-        ``th.optim.Adam`` by default
-    :param optimizer_kwargs: Additional keyword arguments,
-        excluding the learning rate, to pass to the optimizer
-    """
-
-    def __init__(
-        self,
-        observation_space: spaces.Space,
-        action_space: spaces.Space,
-        lr_schedule: Schedule,
-        net_arch: Optional[Union[list[int], dict[str, list[int]]]] = None,
-        activation_fn: type[nn.Module] = nn.Tanh,
-        ortho_init: bool = True,
-        use_sde: bool = False,
-        log_std_init: float = 0.0,
-        full_std: bool = True,
-        use_expln: bool = False,
-        squash_output: bool = False,
-        features_extractor_class: type[BaseFeaturesExtractor] = NatureCNN,
-        features_extractor_kwargs: Optional[dict[str, Any]] = None,
-        share_features_extractor: bool = True,
-        normalize_images: bool = True,
-        optimizer_class: type[th.optim.Optimizer] = th.optim.Adam,
-        optimizer_kwargs: Optional[dict[str, Any]] = None,
-    ):
-        super().__init__(
-            observation_space,
-            action_space,
-            lr_schedule,
-            net_arch,
-            activation_fn,
-            ortho_init,
-            use_sde,
-            log_std_init,
-            full_std,
-            use_expln,
-            squash_output,
-            features_extractor_class,
-            features_extractor_kwargs,
-            share_features_extractor,
-            normalize_images,
-            optimizer_class,
-            optimizer_kwargs,
-        )
-
-
-class MultiInputActorCriticPolicy(ActorCriticPolicy):
-    """
-    MultiInputActorClass policy class for actor-critic algorithms (has both policy and value prediction).
-    Used by A2C, PPO and the likes.
-
-    :param observation_space: Observation space (Tuple)
-    :param action_space: Action space
-    :param lr_schedule: Learning rate schedule (could be constant)
-    :param net_arch: The specification of the policy and value networks.
-    :param activation_fn: Activation function
-    :param ortho_init: Whether to use or not orthogonal initialization
-    :param use_sde: Whether to use State Dependent Exploration or not
-    :param log_std_init: Initial value for the log standard deviation
-    :param full_std: Whether to use (n_features x n_actions) parameters
-        for the std instead of only (n_features,) when using gSDE
-    :param use_expln: Use ``expln()`` function instead of ``exp()`` to ensure
-        a positive standard deviation (cf paper). It allows to keep variance
-        above zero and prevent it from growing too fast. In practice, ``exp()`` is usually enough.
-    :param squash_output: Whether to squash the output using a tanh function,
-        this allows to ensure boundaries when using gSDE.
-    :param features_extractor_class: Uses the CombinedExtractor
-    :param features_extractor_kwargs: Keyword arguments
-        to pass to the features extractor.
-    :param share_features_extractor: If True, the features extractor is shared between the policy and value networks.
-    :param normalize_images: Whether to normalize images or not,
-         dividing by 255.0 (True by default)
-    :param optimizer_class: The optimizer to use,
-        ``th.optim.Adam`` by default
-    :param optimizer_kwargs: Additional keyword arguments,
-        excluding the learning rate, to pass to the optimizer
-    """
-
-    def __init__(
-        self,
-        observation_space: spaces.Dict,
-        action_space: spaces.Space,
-        lr_schedule: Schedule,
-        net_arch: Optional[Union[list[int], dict[str, list[int]]]] = None,
-        activation_fn: type[nn.Module] = nn.Tanh,
-        ortho_init: bool = True,
-        use_sde: bool = False,
-        log_std_init: float = 0.0,
-        full_std: bool = True,
-        use_expln: bool = False,
-        squash_output: bool = False,
-        features_extractor_class: type[BaseFeaturesExtractor] = CombinedExtractor,
-        features_extractor_kwargs: Optional[dict[str, Any]] = None,
-        share_features_extractor: bool = True,
-        normalize_images: bool = True,
-        optimizer_class: type[th.optim.Optimizer] = th.optim.Adam,
-        optimizer_kwargs: Optional[dict[str, Any]] = None,
-    ):
-        super().__init__(
-            observation_space,
-            action_space,
-            lr_schedule,
-            net_arch,
-            activation_fn,
-            ortho_init,
-            use_sde,
-            log_std_init,
-            full_std,
-            use_expln,
-            squash_output,
-            features_extractor_class,
-            features_extractor_kwargs,
-            share_features_extractor,
-            normalize_images,
-            optimizer_class,
-            optimizer_kwargs,
-        )
-
-
-class ContinuousCritic(BaseModel):
-    """
-    Critic network(s) for DDPG/SAC/TD3.
-    It represents the action-state value function (Q-value function).
-    Compared to A2C/PPO critics, this one represents the Q-value
-    and takes the continuous action as input. It is concatenated with the state
-    and then fed to the network which outputs a single value: Q(s, a).
-    For more recent algorithms like SAC/TD3, multiple networks
-    are created to give different estimates.
-
-    By default, it creates two critic networks used to reduce overestimation
-    thanks to clipped Q-learning (cf TD3 paper).
-
-    :param observation_space: Observation space
-    :param action_space: Action space
-    :param net_arch: Network architecture
-    :param features_extractor: Network to extract features
-        (a CNN when using images, a nn.Flatten() layer otherwise)
-    :param features_dim: Number of features
-    :param activation_fn: Activation function
-    :param normalize_images: Whether to normalize images or not,
-         dividing by 255.0 (True by default)
-    :param n_critics: Number of critic networks to create.
-    :param share_features_extractor: Whether the features extractor is shared or not
-        between the actor and the critic (this saves computation time)
-    """
-
-    features_extractor: BaseFeaturesExtractor
-
-    def __init__(
-        self,
-        observation_space: spaces.Space,
-        action_space: spaces.Box,
-        net_arch: list[int],
-        features_extractor: BaseFeaturesExtractor,
-        features_dim: int,
-        activation_fn: type[nn.Module] = nn.ReLU,
-        normalize_images: bool = True,
-        n_critics: int = 2,
-        share_features_extractor: bool = True,
-    ):
-        super().__init__(
-            observation_space,
-            action_space,
-            features_extractor=features_extractor,
-            normalize_images=normalize_images,
-        )
-
-        action_dim = get_action_dim(self.action_space)
-
-        self.share_features_extractor = share_features_extractor
-        self.n_critics = n_critics
-        self.q_networks: list[nn.Module] = []
-        for idx in range(n_critics):
-            q_net_list = create_mlp(features_dim + action_dim, 1, net_arch, activation_fn)
-            q_net = nn.Sequential(*q_net_list)
-            self.add_module(f"qf{idx}", q_net)
-            self.q_networks.append(q_net)
-
-    def forward(self, obs: th.Tensor, actions: th.Tensor) -> tuple[th.Tensor, ...]:
-        # Learn the features extractor using the policy loss only
-        # when the features_extractor is shared with the actor
-        with th.set_grad_enabled(not self.share_features_extractor):
-            features = self.extract_features(obs, self.features_extractor)
-        qvalue_input = th.cat([features, actions], dim=1)
-        return tuple(q_net(qvalue_input) for q_net in self.q_networks)
-
-    def q1_forward(self, obs: th.Tensor, actions: th.Tensor) -> th.Tensor:
-        """
-        Only predict the Q-value using the first network.
-        This allows to reduce computation when all the estimates are not needed
-        (e.g. when updating the policy in TD3).
-        """
-        with th.no_grad():
-            features = self.extract_features(obs, self.features_extractor)
-        return self.q_networks[0](th.cat([features, actions], dim=1))

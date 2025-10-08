@@ -5,8 +5,8 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
-from stable_baselines3.common.preprocessing import check_for_nested_spaces, is_image_space_channels_first
-from stable_baselines3.common.vec_env import DummyVecEnv, VecCheckNan
+from stable_baselines3.common.preprocessing import check_for_nested_spaces
+from stable_baselines3.common.vec_env import DummyVecEnv
 
 
 def _is_oneof_space(space: spaces.Space) -> bool:
@@ -81,8 +81,6 @@ def _check_image_input(observation_space: spaces.Box, key: str = "") -> None:
 
     non_channel_idx = 0
     # Check only if width/height of the image is big enough
-    if is_image_space_channels_first(observation_space):
-        non_channel_idx = -1
 
     if observation_space.shape[non_channel_idx] < 36 or observation_space.shape[1] < 36:
         warnings.warn(
@@ -177,15 +175,6 @@ def _check_unsupported_spaces(env: gym.Env, observation_space: spaces.Space, act
             "action using a wrapper."
         )
     return should_skip
-
-
-def _check_nan(env: gym.Env) -> None:
-    """Check for Inf and NaN using the VecWrapper."""
-    vec_env = VecCheckNan(DummyVecEnv([lambda: env]))
-    vec_env.reset()
-    for _ in range(10):
-        action = np.array([env.action_space.sample()])
-        _, _, _, _ = vec_env.step(action)
 
 
 def _is_goal_env(env: gym.Env) -> bool:
@@ -534,6 +523,5 @@ def check_env(env: gym.Env, warn: bool = True, skip_render_check: bool = True) -
         check_for_nested_spaces(env.observation_space)
         # The check doesn't support nested observations/dict actions
         # A warning about it has already been emitted
-        _check_nan(env)
     except NotImplementedError:
         pass

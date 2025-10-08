@@ -106,34 +106,6 @@ class FloatSchedule:
         return f"FloatSchedule({self.value_schedule})"
 
 
-class LinearSchedule:
-    """
-    LinearSchedule interpolates linearly between start and end
-    between ``progress_remaining`` = 1 and ``progress_remaining`` = ``end_fraction``.
-    This is used in DQN for linearly annealing the exploration fraction
-    (epsilon for the epsilon-greedy strategy).
-
-    :param start: value to start with if ``progress_remaining`` = 1
-    :param end: value to end with if ``progress_remaining`` = 0
-    :param end_fraction: fraction of ``progress_remaining``  where end is reached e.g 0.1
-        then end is reached after 10% of the complete training process.
-    """
-
-    def __init__(self, start: float, end: float, end_fraction: float) -> None:
-        self.start = start
-        self.end = end
-        self.end_fraction = end_fraction
-
-    def __call__(self, progress_remaining: float) -> float:
-        if (1 - progress_remaining) > self.end_fraction:
-            return self.end
-        else:
-            return self.start + (1 - progress_remaining) * (self.end - self.start) / self.end_fraction
-
-    def __repr__(self) -> str:
-        return f"LinearSchedule(start={self.start}, end={self.end}, end_fraction={self.end_fraction})"
-
-
 class ConstantSchedule:
     """
     Constant schedule that always returns the same value.
@@ -152,74 +124,6 @@ class ConstantSchedule:
         return f"ConstantSchedule(val={self.val})"
 
 
-# ===== Deprecated schedule functions ====
-# only kept for backward compatibility when unpickling old models, use FloatSchedule
-# and other classes like `LinearSchedule() instead
-
-
-def get_schedule_fn(value_schedule: Union[Schedule, float]) -> Schedule:
-    """
-    Transform (if needed) learning rate and clip range (for PPO)
-    to callable.
-
-    :param value_schedule: Constant value of schedule function
-    :return: Schedule function (can return constant value)
-    """
-    warnings.warn("get_schedule_fn() is deprecated, please use FloatSchedule() instead")
-    # If the passed schedule is a float
-    # create a constant function
-    if isinstance(value_schedule, (float, int)):
-        # Cast to float to avoid errors
-        value_schedule = constant_fn(float(value_schedule))
-    else:
-        assert callable(value_schedule)
-    # Cast to float to avoid unpickling errors to enable weights_only=True, see GH#1900
-    # Some types are have odd behaviors when part of a Schedule, like numpy floats
-    return lambda progress_remaining: float(value_schedule(progress_remaining))
-
-
-def get_linear_fn(start: float, end: float, end_fraction: float) -> Schedule:
-    """
-    Create a function that interpolates linearly between start and end
-    between ``progress_remaining`` = 1 and ``progress_remaining`` = ``end_fraction``.
-    This is used in DQN for linearly annealing the exploration fraction
-    (epsilon for the epsilon-greedy strategy).
-
-    :params start: value to start with if ``progress_remaining`` = 1
-    :params end: value to end with if ``progress_remaining`` = 0
-    :params end_fraction: fraction of ``progress_remaining``
-        where end is reached e.g 0.1 then end is reached after 10%
-        of the complete training process.
-    :return: Linear schedule function.
-    """
-    warnings.warn("get_linear_fn() is deprecated, please use LinearSchedule() instead")
-
-    def func(progress_remaining: float) -> float:
-        if (1 - progress_remaining) > end_fraction:
-            return end
-        else:
-            return start + (1 - progress_remaining) * (end - start) / end_fraction
-
-    return func
-
-
-def constant_fn(val: float) -> Schedule:
-    """
-    Create a function that returns a constant
-    It is useful for learning rate schedule (to avoid code duplication)
-
-    :param val: constant value
-    :return: Constant schedule function.
-    """
-    warnings.warn("constant_fn() is deprecated, please use ConstantSchedule() instead")
-
-    def func(_):
-        return val
-
-    return func
-
-
-# ==== End of deprecated schedule functions ====
 
 
 def get_device(device: Union[th.device, str] = "auto") -> th.device:
@@ -492,75 +396,6 @@ def is_vectorized_observation(observation: Union[int, np.ndarray], observation_s
         raise ValueError(f"Error: Cannot determine if the observation is vectorized with the space type {observation_space}.")
 
 
-def safe_mean(arr: Union[np.ndarray, list, deque]) -> float:
-    """
-    Compute the mean of an array if there is at least one element.
-    For empty array, return NaN. It is used for logging only.
-
-    :param arr: Numpy array or list of values
-    :return:
-    """
-    return np.nan if len(arr) == 0 else float(np.mean(arr))  # type: ignore[arg-type]
-
-
-def get_parameters_by_name(model: th.nn.Module, included_names: Iterable[str]) -> list[th.Tensor]:
-    """
-    Extract parameters from the state dict of ``model``
-    if the name contains one of the strings in ``included_names``.
-
-    :param model: the model where the parameters come from.
-    :param included_names: substrings of names to include.
-    :return: List of parameters values (Pytorch tensors)
-        that matches the queried names.
-    """
-    return [param for name, param in model.state_dict().items() if any([key in name for key in included_names])]
-
-
-def zip_strict(*iterables: Iterable) -> Iterable:
-    r"""
-    ``zip()`` function but enforces that iterables are of equal length.
-    Raises ``ValueError`` if iterables not of equal length.
-    Code inspired by Stackoverflow answer for question #32954486.
-
-    :param \*iterables: iterables to ``zip()``
-    """
-    # As in Stackoverflow #32954486, use
-    # new object for "empty" in case we have
-    # Nones in iterable.
-    sentinel = object()
-    for combo in zip_longest(*iterables, fillvalue=sentinel):
-        if sentinel in combo:
-            raise ValueError("Iterables have different lengths")
-        yield combo
-
-
-def polyak_update(
-    params: Iterable[th.Tensor],
-    target_params: Iterable[th.Tensor],
-    tau: float,
-) -> None:
-    """
-    Perform a Polyak average update on ``target_params`` using ``params``:
-    target parameters are slowly updated towards the main parameters.
-    ``tau``, the soft update coefficient controls the interpolation:
-    ``tau=1`` corresponds to copying the parameters to the target ones whereas nothing happens when ``tau=0``.
-    The Polyak update is done in place, with ``no_grad``, and therefore does not create intermediate tensors,
-    or a computation graph, reducing memory cost and improving performance.  We scale the target params
-    by ``1-tau`` (in-place), add the new weights, scaled by ``tau`` and store the result of the sum in the target
-    params (in place).
-    See https://github.com/DLR-RM/stable-baselines3/issues/93
-
-    :param params: parameters to use to update the target params
-    :param target_params: parameters to update
-    :param tau: the soft update coefficient ("Polyak update", between 0 and 1)
-    """
-    with th.no_grad():
-        # zip does not raise an exception if length of parameters does not match.
-        for param, target_param in zip_strict(params, target_params):
-            target_param.data.mul_(1 - tau)
-            th.add(target_param.data, param.data, alpha=tau, out=target_param.data)
-
-
 def obs_as_tensor(obs: Union[np.ndarray, dict[str, np.ndarray]], device: th.device) -> Union[th.Tensor, TensorDict]:
     """
     Moves the observation to the given device.
@@ -577,32 +412,15 @@ def obs_as_tensor(obs: Union[np.ndarray, dict[str, np.ndarray]], device: th.devi
         raise TypeError(f"Unrecognized type of observation {type(obs)}")
 
 
-def should_collect_more_steps(
-    train_freq: TrainFreq,
-    num_collected_steps: int,
-    num_collected_episodes: int,
-) -> bool:
+def safe_mean(arr: Union[np.ndarray, list, deque]) -> float:
     """
-    Helper used in ``collect_rollouts()`` of off-policy algorithms
-    to determine the termination condition.
+    Compute the mean of an array if there is at least one element.
+    For empty array, return NaN. It is used for logging only.
 
-    :param train_freq: How much experience should be collected before updating the policy.
-    :param num_collected_steps: The number of already collected steps.
-    :param num_collected_episodes: The number of already collected episodes.
-    :return: Whether to continue or not collecting experience
-        by doing rollouts of the current policy.
+    :param arr: Numpy array or list of values
+    :return:
     """
-    if train_freq.unit == TrainFrequencyUnit.STEP:
-        return num_collected_steps < train_freq.frequency
-
-    elif train_freq.unit == TrainFrequencyUnit.EPISODE:
-        return num_collected_episodes < train_freq.frequency
-
-    else:
-        raise ValueError(
-            "The unit of the `train_freq` must be either TrainFrequencyUnit.STEP "
-            f"or TrainFrequencyUnit.EPISODE not '{train_freq.unit}'!"
-        )
+    return np.nan if len(arr) == 0 else float(np.mean(arr))  # type: ignore[arg-type]
 
 
 def get_system_info(print_info: bool = True) -> tuple[dict[str, str], str]:
