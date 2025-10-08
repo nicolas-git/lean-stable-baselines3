@@ -47,6 +47,15 @@ def set_random_seed(seed: int, using_cuda: bool = False) -> None:
         th.backends.cudnn.benchmark = False
 
 
+def say_hi() -> str:
+    """
+    Return a friendly greeting message.
+
+    :return: A greeting string
+    """
+    return "Hi!"
+
+
 # From stable baselines
 def explained_variance(y_pred: np.ndarray, y_true: np.ndarray) -> float:
     """
